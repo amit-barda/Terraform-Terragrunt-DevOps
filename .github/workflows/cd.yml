@@ -1,0 +1,107 @@
+name: CD
+
+# Continuous deployment: plan, then (after manual approval) apply, against a
+# real AWS account. This workflow needs cloud credentials, so it is OFF by
+# default and only runs when the repository variable ENABLE_CD is set to
+# "true". That keeps the repo's default pipeline green without AWS access
+# while still shipping a production-shaped deploy pipeline.
+#
+# To enable:
+#   1. Bootstrap the S3 backend + DynamoDB lock table (see README).
+#   2. Create an IAM role the GitHub OIDC provider can assume, and store its
+#      ARN in the secret AWS_DEPLOY_ROLE_ARN.
+#   3. Create a GitHub Environment named "production" with required reviewers,
+#      so the apply job pauses for human approval.
+#   4. Set the repository variable ENABLE_CD=true.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "live/**"
+      - "modules/**"
+      - "root.hcl"
+      - ".github/workflows/cd.yml"
+  workflow_dispatch:
+    inputs:
+      environment_path:
+        description: "Path under live/ to deploy"
+        required: true
+        default: "live/company-a/production"
+
+# Never let two deploys of the same target run concurrently.
+concurrency:
+  group: cd-${{ github.event.inputs.environment_path || 'live/company-a/production' }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write # required for AWS OIDC
+
+env:
+  TF_VERSION: "1.9.8"
+  TG_VERSION: "v1.1.0"
+  DEPLOY_PATH: ${{ github.event.inputs.environment_path || 'live/company-a/production' }}
+
+jobs:
+  plan:
+    name: Plan
+    if: vars.ENABLE_CD == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Install Terragrunt
+        run: |
+          sudo curl -sL -o /usr/local/bin/terragrunt \
+            "https://github.com/gruntwork-io/terragrunt/releases/download/${TG_VERSION}/terragrunt_linux_amd64"
+          sudo chmod +x /usr/local/bin/terragrunt
+          terragrunt --version
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: terragrunt run-all plan
+        working-directory: ${{ env.DEPLOY_PATH }}
+        run: terragrunt run-all plan --non-interactive
+
+  apply:
+    name: Apply
+    if: vars.ENABLE_CD == 'true'
+    needs: plan
+    runs-on: ubuntu-latest
+    # Binds to the GitHub Environment protection rules: with required
+    # reviewers configured, this job waits for manual approval before running.
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Install Terragrunt
+        run: |
+          sudo curl -sL -o /usr/local/bin/terragrunt \
+            "https://github.com/gruntwork-io/terragrunt/releases/download/${TG_VERSION}/terragrunt_linux_amd64"
+          sudo chmod +x /usr/local/bin/terragrunt
+          terragrunt --version
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: terragrunt run-all apply
+        working-directory: ${{ env.DEPLOY_PATH }}
+        run: terragrunt run-all apply --non-interactive

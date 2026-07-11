@@ -1,6 +1,7 @@
 # AWS Infrastructure — Terraform + Terragrunt
 
 [![CI](https://github.com/amit-barda/Terraform-Terragrunt-DevOps/actions/workflows/ci.yml/badge.svg)](https://github.com/amit-barda/Terraform-Terragrunt-DevOps/actions/workflows/ci.yml)
+[![CD](https://github.com/amit-barda/Terraform-Terragrunt-DevOps/actions/workflows/cd.yml/badge.svg)](https://github.com/amit-barda/Terraform-Terragrunt-DevOps/actions/workflows/cd.yml)
 
 Multi-company, multi-environment AWS infrastructure. Each `(company, environment)`
 pair deploys into its own AWS account. Currently implements a VPC + ECS
@@ -15,7 +16,7 @@ graph TB
 
     subgraph VPC["VPC 10.0.0.0/16 — company-a-production"]
         subgraph Public["Public subnets (2 AZs)"]
-            ALB["ALB\ncompany-a-production-alb"]
+            ALB["ALB<br/>company-a-production-alb"]
             NAT["NAT Gateway"]
             IGW["Internet Gateway"]
         end
@@ -26,12 +27,12 @@ graph TB
         end
     end
 
-    ECS["ECS Cluster (Fargate + Fargate Spot)\nContainer Insights enabled"]
-    CW["CloudWatch Logs\n/ecs/company-a-production/nginx"]
+    ECS["ECS Cluster (Fargate + Fargate Spot)<br/>Container Insights enabled"]
+    CW["CloudWatch Logs<br/>/ecs/company-a-production/nginx"]
     S3EP["S3 Gateway Endpoint"]
 
     User -->|"HTTP :80, Host: nginx.company-a.example.com"| ALB
-    ALB -->|"host-header rule\n-> nginx target group"| T1
+    ALB -->|"host-header rule<br/>-> nginx target group"| T1
     ALB --> T2
     ALB -.->|"no host-header match"| NF["404 fixed-response"]
     T1 & T2 -.->|"scheduled on"| ECS
@@ -158,11 +159,12 @@ copy the component `terragrunt.hcl` files from `company-a/production` or
 start from an empty structure like `company-b` — no changes to `root.hcl`
 or `modules/` are needed either way.
 
-## Continuous integration
+## CI / CD
 
-`.github/workflows/ci.yml` runs on every push and pull request to `main`.
-None of the core jobs need AWS credentials — they validate the code
-statically:
+### CI — `.github/workflows/ci.yml`
+
+Runs on every push and pull request to `main`. None of the core jobs need
+AWS credentials — they validate the code statically:
 
 | Job | What it checks |
 |---|---|
@@ -173,6 +175,27 @@ statically:
 
 The `validate` job works without any applied state because the `dependency`
 blocks fall back to `mock_outputs`, exactly as they do locally.
+
+### CD — `.github/workflows/cd.yml`
+
+Deploys to a real AWS account: a `plan` job followed by an `apply` job that
+is gated on a GitHub **Environment** (`production`) so it pauses for manual
+approval before touching infrastructure. Triggered on pushes to `main` that
+touch `live/`, `modules/`, or `root.hcl`, and via manual `workflow_dispatch`
+(with a selectable target path).
+
+Because it needs cloud credentials, CD is **off by default** and only runs
+when the repository variable `ENABLE_CD=true` is set. Enabling it requires,
+one time:
+
+1. The state backend bootstrapped (see above).
+2. An IAM role assumable via GitHub OIDC, its ARN stored in the secret
+   `AWS_DEPLOY_ROLE_ARN`.
+3. A GitHub Environment named `production` with required reviewers (this is
+   what turns the `apply` job into an approval gate).
+4. The repository variable `ENABLE_CD=true`.
+
+Authentication is OIDC — no long-lived AWS keys are stored in the repo.
 
 ## Design decisions
 
@@ -231,5 +254,5 @@ blocks fall back to `mock_outputs`, exactly as they do locally.
 - No HTTPS listener / ACM certificate — HTTP only, matching the assignment scope.
 - No autoscaling (`aws_appautoscaling_target`) on the ECS service — fixed `desired_count`.
 - Single NAT gateway (see above) — one gateway per AZ would remove that SPOF.
-- CI runs static validation on every push/PR (see below); an actual deploy
-  pipeline (apply on merge, with environment approvals) is left as the next step.
+- CD is provided but off by default (needs a real account + backend bootstrap
+  to enable); it has not been exercised against live AWS from this repo.
