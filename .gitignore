@@ -1,0 +1,48 @@
+# ---- Terraform ----
+**/.terraform/*
+*.tfstate
+*.tfstate.*
+*.tfvars
+*.tfvars.json
+!example.tfvars
+crash.log
+crash.*.log
+override.tf
+override.tf.json
+*_override.tf
+*_override.tf.json
+.terraformrc
+terraform.rc
+*.tfplan
+
+# ---- Terragrunt ----
+.terragrunt-cache/
+**/.terragrunt-cache/*
+.terragrunt-*.lock
+
+# Files generated at plan/apply time by root terragrunt.hcl `generate` blocks.
+# (In practice these land inside .terragrunt-cache/ since every component
+# sets terraform.source, but this is a safety net regardless.)
+backend.tf
+provider.tf
+
+# ---- Secrets / credentials ----
+*.pem
+*.key
+*.pfx
+secrets.auto.tfvars
+.env
+.env.*
+credentials
+.aws/
+
+# ---- IDE / OS ----
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# ---- Unrelated pre-existing content in this working directory ----
+# Not part of this Terraform/Terragrunt repo; excluded rather than moved so
+# as not to touch a directory this repo didn't create.
+jobradar-ai/
