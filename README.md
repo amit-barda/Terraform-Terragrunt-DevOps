@@ -249,10 +249,3 @@ Authentication is OIDC — no long-lived AWS keys are stored in the repo.
   it exists to prove the pattern scales to a new company with zero changes
   to `root.hcl` or `modules/`.
 
-## Known limitations / next steps
-
-- No HTTPS listener / ACM certificate — HTTP only, matching the assignment scope.
-- No autoscaling (`aws_appautoscaling_target`) on the ECS service — fixed `desired_count`.
-- Single NAT gateway (see above) — one gateway per AZ would remove that SPOF.
-- CD is provided but off by default (needs a real account + backend bootstrap
-  to enable); it has not been exercised against live AWS from this repo.
