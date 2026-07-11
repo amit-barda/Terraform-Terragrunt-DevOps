@@ -1,5 +1,7 @@
 # AWS Infrastructure — Terraform + Terragrunt
 
+[![CI](https://github.com/amit-barda/Terraform-Terragrunt-DevOps/actions/workflows/ci.yml/badge.svg)](https://github.com/amit-barda/Terraform-Terragrunt-DevOps/actions/workflows/ci.yml)
+
 Multi-company, multi-environment AWS infrastructure. Each `(company, environment)`
 pair deploys into its own AWS account. Currently implements a VPC + ECS
 Fargate + ALB stack for `company-a/production`, running a vanilla `nginx`
@@ -156,6 +158,22 @@ copy the component `terragrunt.hcl` files from `company-a/production` or
 start from an empty structure like `company-b` — no changes to `root.hcl`
 or `modules/` are needed either way.
 
+## Continuous integration
+
+`.github/workflows/ci.yml` runs on every push and pull request to `main`.
+None of the core jobs need AWS credentials — they validate the code
+statically:
+
+| Job | What it checks |
+|---|---|
+| `fmt` | `terraform fmt -check -recursive` + `terragrunt hcl fmt --check` |
+| `validate` | `terraform validate` for each module (no backend) + `terragrunt hcl validate` for the live configs |
+| `lint` | `tflint` (recommended ruleset) against each module |
+| `plan` | *Opt-in.* Real `terragrunt run-all plan` against AWS via OIDC. Off unless the repo variable `ENABLE_PLAN=true` is set — see the workflow comments. |
+
+The `validate` job works without any applied state because the `dependency`
+blocks fall back to `mock_outputs`, exactly as they do locally.
+
 ## Design decisions
 
 - **`root.hcl`, not `terragrunt.hcl`, for the root config.** Terragrunt
@@ -213,6 +231,5 @@ or `modules/` are needed either way.
 - No HTTPS listener / ACM certificate — HTTP only, matching the assignment scope.
 - No autoscaling (`aws_appautoscaling_target`) on the ECS service — fixed `desired_count`.
 - Single NAT gateway (see above) — one gateway per AZ would remove that SPOF.
-- No CI/CD pipeline defined yet (repo is GitHub-hosted; a GitHub Actions
-  workflow running `terragrunt run-all plan` on PRs would be the natural
-  next addition).
+- CI runs static validation on every push/PR (see below); an actual deploy
+  pipeline (apply on merge, with environment approvals) is left as the next step.

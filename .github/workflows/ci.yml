@@ -1,0 +1,140 @@
+name: CI
+
+# Static validation of the Terraform/Terragrunt code. No AWS credentials are
+# required for these jobs: everything here validates HCL, formatting and
+# module schemas without touching a real backend or account. A real
+# `terragrunt plan` (which needs a bootstrapped S3 backend + credentials) is
+# provided as a separate, opt-in job at the bottom.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+env:
+  TF_VERSION: "1.9.8"
+  TG_VERSION: "v1.1.0"
+
+jobs:
+  fmt:
+    name: Format check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Install Terragrunt
+        run: |
+          sudo curl -sL -o /usr/local/bin/terragrunt \
+            "https://github.com/gruntwork-io/terragrunt/releases/download/${TG_VERSION}/terragrunt_linux_amd64"
+          sudo chmod +x /usr/local/bin/terragrunt
+          terragrunt --version
+
+      - name: terraform fmt
+        run: terraform fmt -check -recursive -diff .
+
+      - name: terragrunt hcl fmt
+        run: terragrunt hcl fmt --check --diff
+
+  validate:
+    name: Validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Install Terragrunt
+        run: |
+          sudo curl -sL -o /usr/local/bin/terragrunt \
+            "https://github.com/gruntwork-io/terragrunt/releases/download/${TG_VERSION}/terragrunt_linux_amd64"
+          sudo chmod +x /usr/local/bin/terragrunt
+          terragrunt --version
+
+      # Validates every module's HCL and provider schema without a backend.
+      - name: terraform validate (each module)
+        run: |
+          set -e
+          for module in modules/*/; do
+            echo "::group::terraform validate $module"
+            terraform -chdir="$module" init -backend=false -input=false
+            terraform -chdir="$module" validate -no-color
+            rm -rf "$module/.terraform" "$module/.terraform.lock.hcl"
+            echo "::endgroup::"
+          done
+
+      # Validates the Terragrunt configs themselves (includes, dependencies,
+      # generate blocks). Dependency outputs fall back to mock_outputs here,
+      # which is exactly what lets this run without any applied state.
+      - name: terragrunt hcl validate
+        run: terragrunt hcl validate
+
+  lint:
+    name: tflint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: terraform-linters/setup-tflint@v4
+        with:
+          tflint_version: v0.63.1
+
+      - name: tflint init
+        run: tflint --init
+
+      - name: tflint (each module)
+        run: |
+          set -e
+          for module in modules/*/; do
+            echo "::group::tflint $module"
+            tflint --chdir="$module" --config="$GITHUB_WORKSPACE/.tflint.hcl" --no-color
+            echo "::endgroup::"
+          done
+
+  # Opt-in: a real `terragrunt run-all plan` against AWS. Off by default so
+  # the pipeline stays green without cloud credentials. To enable, set the
+  # repository variable ENABLE_PLAN=true and configure OIDC / AWS credentials
+  # (and make sure the S3 backend + DynamoDB lock table are bootstrapped -
+  # see README "State backend bootstrap").
+  plan:
+    name: Terragrunt plan (opt-in)
+    runs-on: ubuntu-latest
+    if: vars.ENABLE_PLAN == 'true'
+    needs: [fmt, validate, lint]
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TF_VERSION }}
+          terraform_wrapper: false
+
+      - name: Install Terragrunt
+        run: |
+          sudo curl -sL -o /usr/local/bin/terragrunt \
+            "https://github.com/gruntwork-io/terragrunt/releases/download/${TG_VERSION}/terragrunt_linux_amd64"
+          sudo chmod +x /usr/local/bin/terragrunt
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_PLAN_ROLE_ARN }}
+          aws-region: us-east-1
+
+      - name: terragrunt run-all plan
+        working-directory: live/company-a/production
+        run: terragrunt run-all plan --non-interactive
